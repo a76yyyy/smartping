@@ -284,7 +284,23 @@
 				}
 			},
 			tooltip: {
-				trigger: 'axis'
+				trigger: 'axis',
+				formatter: function (params) {
+					var result = params[0].axisValueLabel + '<br/>';
+					params.forEach(function (item) {
+						// 根据系列名称（seriesName）来判断，为不同的数据系列添加不同的单位
+						if (item.seriesName === 'lossPk') {
+							// 为丢包率添加 '%' 单位
+							result += item.marker + ' ' + item.seriesName + ': ' + item.value + ' %<br/>';
+						} else if (item.seriesName.endsWith('Delay')) {
+							// 为延迟添加 'ms' 单位
+							result += item.marker + ' ' + item.seriesName + ': ' + item.value + ' ms<br/>';
+						} else {
+							result += item.marker + ' ' + item.seriesName + ': ' + item.value + '<br/>';
+						}
+					});
+					return result;
+				}
 			},
 			xAxis: {
 				data: []
@@ -293,7 +309,10 @@
 			yAxis: [{
 				type: 'value',
 				name: 'Delay',
-				position: 'left'
+				position: 'left',
+				axisLabel: {
+					formatter: '{value} ms'
+				}
 			}, {
 				type: 'value',
 				name: 'Package(LOSS)',

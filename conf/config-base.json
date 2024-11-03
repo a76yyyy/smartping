@@ -3,6 +3,7 @@
 	"Port": 8899,
 	"Name": "本机",
 	"Addr": "127.0.0.1",
+	"PingPrivilege": false,
 	"Mode": {
 		"Endpoint": "",
 		"LastSuccTime": "",

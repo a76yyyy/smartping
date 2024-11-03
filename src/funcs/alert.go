@@ -11,6 +11,7 @@ import (
 
 	"github.com/cihub/seelog"
 	_ "github.com/mattn/go-sqlite3"
+
 	// _ "github.com/glebarez/sqlite"
 	// _ "github.com/logoove/sqlite"
 	// _ "github.com/go-sqlite/sqlite3"
@@ -28,9 +29,6 @@ func StartAlert() {
 	for _, v := range g.SelfCfg.Topology {
 		if v["Addr"] != g.SelfCfg.Addr {
 			sFlag := CheckAlertStatus(v)
-			if !sFlag {
-				sFlag = CheckDelayStatus(v)
-			}
 			if sFlag {
 				g.AlertStatus[v["Addr"]] = true
 			}
@@ -45,7 +43,7 @@ func StartAlert() {
 				l.Targetname = v["Name"]
 				l.Targetip = v["Addr"]
 				mtrString := ""
-				hops, err := nettools.RunMtr(g.Cfg.Addr, v["Addr"], time.Second, 64, 6)
+				hops, err := nettools.RunMtr(v["Addr"], time.Second, 64, 6)
 				if nil != err {
 					seelog.Error("[func:StartAlert] Traceroute error ", err)
 					mtrString = err.Error()
@@ -76,63 +74,18 @@ func CheckAlertStatus(v map[string]string) bool {
 	Thdchecksec, _ := strconv.Atoi(v["Thdchecksec"])
 	timeStartStr := time.Unix((time.Now().Unix() - int64(Thdchecksec)), 0).Format("2006-01-02 15:04")
 	querysql := "SELECT count(1) cnt FROM  `pinglog` where logtime >= '" + timeStartStr + "' and target = '" + v["Addr"] + "' and (cast(avgdelay as double) > " + v["Thdavgdelay"] + " or cast(losspk as double) > " + v["Thdloss"] + ") "
-	rows, err := g.Db.Query(querysql)
-	defer rows.Close()
 	seelog.Debug("[func:CheckAlertStatus] ", querysql)
-	if err != nil {
-		seelog.Error("[func:CheckAlertStatus] Query Error ", err)
-		return false
-	}
-	for rows.Next() {
-		l := new(Cnt)
-		err := rows.Scan(&l.Cnt)
-		if err != nil {
-			// seelog.Error("[func:CheckAlertStatus]", err)
-			return false
-		}
-		Thdoccnum, _ := strconv.Atoi(v["Thdoccnum"])
-		if l.Cnt <= Thdoccnum {
-			return true
-		} else {
-			return false
-		}
-	}
-	return false
-}
-
-func CheckDelayStatus(v map[string]string) bool {
-	Thdchecksec, _ := strconv.Atoi(v["Thdchecksec"])
-	timeStartStr := time.Unix((time.Now().Unix() - int64(Thdchecksec)), 0).Format("2006-01-02 15:04")
-	thdavgdelay := 100.0
-	querysql := "SELECT avg(avgdelay) cnt FROM  `pinglog` where logtime < '" + timeStartStr + "' and target = '" + v["Addr"] + "' order by logtime desc limit 10"
 	rows, err := g.Db.Query(querysql)
+	if err != nil {
+		seelog.Error("[func:CheckAlertStatus] Query Error: ", err)
+		return false
+	}
 	defer rows.Close()
-	seelog.Debug("[func:CheckDelayStatus] ", querysql)
-	if err != nil {
-		seelog.Error("[func:CheckDelayStatus] Query Error ", err)
-		return false
-	}
-	for rows.Next() {
-		err := rows.Scan(&thdavgdelay)
-		if err != nil {
-			seelog.Error("[func:CheckDelayStatus]", err)
-			return false
-		}
-	}
-
-	querysql = "SELECT count(1) cnt FROM  `pinglog` where logtime >= '" + timeStartStr + "' and target = '" + v["Addr"] + "' and cast(avgdelay as double) > " + fmt.Sprintf("%f", thdavgdelay*1.5)
-	rows, err = g.Db.Query(querysql)
-	// defer rows.Close()
-	seelog.Debug("[func:CheckDelayStatus] ", querysql)
-	if err != nil {
-		seelog.Error("[func:CheckDelayStatus] Query Error ", err)
-		return false
-	}
 	for rows.Next() {
 		l := new(Cnt)
 		err := rows.Scan(&l.Cnt)
 		if err != nil {
-			// seelog.Error("[func:StartDelay]", err)
+			seelog.Error("[func:CheckAlertStatus] Scan Error: ", err)
 			return false
 		}
 		Thdoccnum, _ := strconv.Atoi(v["Thdoccnum"])
@@ -169,7 +122,7 @@ func AlertSendMail(t g.AlertLog) {
 	fmt.Fprintf(mtrstr, "<table>")
 	fmt.Fprintf(mtrstr, "<tr><td>Host</td><td>Loss</td><td>Snt</td><td>Last</td><td>Avg</td><td>Best</td><td>Wrst</td><td>StDev</td></tr>")
 	for i, hop := range hops {
-		fmt.Fprintf(mtrstr, "<tr><td>%d %s</td><td>%.2f</td><td>%d</td><td>%v</td><td>%v</td><td>%v</td><td>%v</td><td>%.2f</td></tr>", i+1, hop.Host, ((float64(hop.Loss) / float64(hop.Send)) * 100), hop.Send, hop.Last, hop.Avg, hop.Best, hop.Wrst, hop.StDev)
+		fmt.Fprintf(mtrstr, "<tr><td>%d %s</td><td>%.2f</td><td>%d</td><td>%v</td><td>%v</td><td>%v</td><td>%v</td><td>%v</td></tr>", i+1, hop.Host, ((float64(hop.Loss) / float64(hop.Send)) * 100), hop.Send, hop.Last, hop.Avg, hop.Best, hop.Wrst, hop.StDev)
 	}
 	fmt.Fprintf(mtrstr, "</table>")
 	title := "【" + t.Fromname + "->" + t.Targetname + "】网络异常报警（" + t.Logtime + "）- SmartPing"
@@ -194,6 +147,7 @@ func SendMail(user, pwd, host, to, subject, body string) error {
 	send_to := strings.Split(to, ";")
 	err := smtp.SendMail(host, auth, user, send_to, msg)
 	if err != nil {
+		seelog.Error("[func:SendMail] SMTP Send Mail Error ", err)
 		return err
 	}
 	return nil
@@ -218,6 +172,10 @@ func AlertWechat(t g.AlertLog) {
 	title := "【" + t.Fromname + "->" + t.Targetname + "】网络异常报警（" + t.Logtime + "）- SmartPing\n"
 	content := "报警时间：" + t.Logtime + " \n" // 来路：" + t.Fromname + "(" + t.Fromip + ") \n目的：" + t.Targetname + "(" + t.Targetip + ") \n"
 	agentId, err := StringToInt(g.Cfg.Alert["AgentId"])
+	if err != nil {
+		seelog.Error("[func:AlertWechat] AgentId Error ", err)
+		return
+	}
 	corpId := g.Cfg.Alert["CorpId"]
 	corpSecret := g.Cfg.Alert["CorpSecret"]
 	toUser := g.Cfg.Alert["RevcWechatList"]
@@ -227,8 +185,8 @@ func AlertWechat(t g.AlertLog) {
 	// token.ErrMsg = g.Cfg.Alert["ErrMsg"]
 	token.AccessToken = g.Cfg.Alert["AccessToken"]
 	token.ExpiresIn, _ = StringToInt64(g.Cfg.Alert["ExpiresIn"])
-	token.Time, _ = time.Parse("2016-01-02 15:04:05", g.Cfg.Alert["Time"])
-	if token.AccessToken == "" || time.Now().Sub(token.Time).Seconds() > float64(token.ExpiresIn)-200 {
+	token.Time, _ = time.Parse("2006-01-02 15:04:05", g.Cfg.Alert["Time"])
+	if token.AccessToken == "" || time.Since(token.Time).Seconds() > float64(token.ExpiresIn)-200 {
 		token = GetAccessToken(corpId, corpSecret)
 		if token.ErrCode != 0 {
 			seelog.Error("[func:AlertWechat] GetAccessToken Error ", token.ErrCode, token.ErrMsg)

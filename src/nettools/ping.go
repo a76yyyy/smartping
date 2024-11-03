@@ -1,26 +1,15 @@
 package nettools
 
 import (
-	"bytes"
-	"encoding/binary"
-	"math/rand"
+	"errors"
 	"net"
 	"time"
 
-	"golang.org/x/net/icmp"
-	"golang.org/x/net/ipv4"
-)
+	"github.com/a76yyyy/smartping/src/g"
+	"github.com/cihub/seelog"
 
-type pkg struct {
-	conn     net.PacketConn
-	ipv4conn *ipv4.PacketConn
-	msg      icmp.Message
-	netmsg   []byte
-	id       int
-	seq      int
-	maxrtt   time.Duration
-	dest     net.Addr
-}
+	probing "github.com/prometheus-community/pro-bing"
+)
 
 type ICMP struct {
 	Addr    net.Addr
@@ -34,96 +23,126 @@ type ICMP struct {
 	Error   error
 }
 
-func (t *pkg) Send(SrcAddr string, ttl int) ICMP {
-	var hop ICMP
-	var err error
-	// t.conn, err = net.ListenPacket("ip4:icmp", "0.0.0.0")
-	t.conn, err = net.ListenPacket("ip4:icmp", SrcAddr)
-	if nil != err {
-		return hop
-	}
-	defer t.conn.Close()
-	t.ipv4conn = ipv4.NewPacketConn(t.conn)
-	defer t.ipv4conn.Close()
-	hop.Error = t.conn.SetReadDeadline(time.Now().Add(t.maxrtt))
-	if nil != hop.Error {
-		return hop
-	}
-	if nil != t.ipv4conn {
-		hop.Error = t.ipv4conn.SetTTL(ttl)
-	}
-	if nil != hop.Error {
-		return hop
-	}
-	sendOn := time.Now()
-	if nil != t.ipv4conn {
-		_, hop.Error = t.conn.WriteTo(t.netmsg, t.dest)
-	}
-	if nil != hop.Error {
-		return hop
-	}
-	buf := make([]byte, 1500)
-	for {
-		var readLen int
-		readLen, hop.Addr, hop.Error = t.conn.ReadFrom(buf)
-		if nerr, ok := hop.Error.(net.Error); ok && nerr.Timeout() {
-			hop.Timeout = true
-			return hop
-		}
-		if nil != hop.Error {
-			return hop
-		}
-		var result *icmp.Message
-		if nil != t.ipv4conn {
-			result, hop.Error = icmp.ParseMessage(1, buf[:readLen])
-		}
-		if nil != hop.Error {
-			return hop
-		}
-		switch result.Type {
-		case ipv4.ICMPTypeEchoReply:
-			if rply, ok := result.Body.(*icmp.Echo); ok {
-				if t.id == rply.ID && t.seq == rply.Seq {
-					hop.Final = true
-					hop.RTT = time.Since(sendOn)
-					return hop
-				}
-
-			}
-		case ipv4.ICMPTypeTimeExceeded:
-			if rply, ok := result.Body.(*icmp.TimeExceeded); ok {
-				if len(rply.Data) > 24 {
-					if uint16(t.id) == binary.BigEndian.Uint16(rply.Data[24:26]) {
-						hop.RTT = time.Since(sendOn)
-						return hop
-					}
-				}
-			}
-		case ipv4.ICMPTypeDestinationUnreachable:
-			if rply, ok := result.Body.(*icmp.Echo); ok {
-				if t.id == rply.ID && t.seq == rply.Seq {
-					hop.Down = true
-					hop.RTT = time.Since(sendOn)
-					return hop
-				}
-
-			}
-		}
-	}
-}
-
-func RunPing(SrcAddr string, IpAddr *net.IPAddr, maxrtt time.Duration, maxttl int, seq int) (float64, error) {
-	var res pkg
-	var err error
-	res.dest = IpAddr
-	res.maxrtt = maxrtt
-	res.id = rand.Intn(65535)
-	res.seq = seq
-	res.msg = icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &icmp.Echo{ID: res.id, Seq: res.seq, Data: bytes.Repeat([]byte("Go Smart Ping!"), 4)}}
-	res.netmsg, err = res.msg.Marshal(nil)
-	if nil != err {
+func SinglePing(TargetIPAddr *net.IPAddr, Timeout time.Duration, MaxTTL int) (float64, error) {
+	addr := TargetIPAddr.String()
+	pinger, err := probing.NewPinger(addr)
+	if err != nil {
 		return 0, err
 	}
-	pingRsult := res.Send(SrcAddr, maxttl)
-	return float64(pingRsult.RTT.Nanoseconds()) / 1e6, pingRsult.Error
+
+	pinger.SetPrivileged(g.Cfg.PingPrivilege)
+	pinger.Timeout = Timeout
+	pinger.Count = 1
+	pinger.TTL = MaxTTL
+	pinger.Size = 64 // 设置为原始代码中的数据大小 (16 * 4 = 64 bytes)
+
+	err = pinger.Run()
+	if err != nil {
+		return 0, err
+	}
+
+	stats := pinger.Statistics()
+	if len(stats.Rtts) > 0 {
+		return float64(stats.Rtts[0].Nanoseconds()) / 1e6, nil
+	}
+
+	return 0, errors.New("no Reply")
+}
+
+// GeneralPing 是一个通用的 Ping 函数，可以被多个任务共用
+func GeneralPing(TargetIPAddr *net.IPAddr, Count int, Timeout time.Duration, MaxTTL int) (g.PingSt, error) {
+	stats := g.PingSt{
+		MinDelay: -1,
+	}
+
+	pinger, err := probing.NewPinger(TargetIPAddr.String())
+	if err != nil {
+		return stats, err
+	}
+
+	pinger.SetPrivileged(g.Cfg.PingPrivilege)
+	pinger.Timeout = Timeout
+	pinger.Count = Count
+	pinger.TTL = MaxTTL
+	pinger.Size = 64 // 设置为原始代码中的数据大小 (16 * 4 = 64 bytes)
+
+	err = pinger.Run()
+	if err != nil {
+		return stats, err
+	}
+
+	pingStats := pinger.Statistics()
+
+	// 计算统计信息
+	for _, rtt := range pingStats.Rtts {
+		delay := float64(rtt.Nanoseconds()) / 1e6
+		stats.AvgDelay += delay
+		if stats.MaxDelay < delay {
+			stats.MaxDelay = delay
+		}
+		if stats.MinDelay == -1 || stats.MinDelay > delay {
+			stats.MinDelay = delay
+		}
+	}
+
+	stats.SendPk = pingStats.PacketsSent
+	stats.RevcPk = pingStats.PacketsRecv
+	stats.LossPk = int(pingStats.PacketLoss)
+
+	if stats.RevcPk > 0 {
+		stats.AvgDelay /= float64(stats.RevcPk)
+	} else {
+		stats.AvgDelay = 0
+	}
+	seelog.Debug("[func:GeneralPing] Target IP: ", TargetIPAddr.String(),
+		" SendPk: ", stats.SendPk,
+		" RevcPk: ", stats.RevcPk,
+		" LossPk: ", stats.LossPk,
+		" AvgDelay: ", stats.AvgDelay,
+		" MaxDelay: ", stats.MaxDelay,
+		" MinDelay: ", stats.MinDelay)
+	return stats, nil
+}
+
+func UniformPing(TargetIPAddr *net.IPAddr, Count int, Timeout time.Duration, MaxTTL int) (g.PingSt, error) {
+	stats := g.PingSt{
+		MinDelay: -1,
+	}
+	lossPk := 0
+
+	for i := 0; i < Count; i++ {
+		start := time.Now().UnixNano()
+		delay, err := SinglePing(TargetIPAddr, Timeout, MaxTTL)
+		if err == nil {
+			stats.AvgDelay += delay
+			if stats.MaxDelay < delay {
+				stats.MaxDelay = delay
+			}
+			if stats.MinDelay == -1 || stats.MinDelay > delay {
+				stats.MinDelay = delay
+			}
+			stats.RevcPk++
+			seelog.Debug("[func:UniformPing] Target IP: ", TargetIPAddr, " ID: ", i, " delay: ", delay)
+		} else {
+			lossPk++
+			seelog.Error("[func:UniformPing] Target IP: ", TargetIPAddr, " ID: ", i, " err: ", err)
+		}
+		stats.SendPk++
+		duringTime := time.Now().UnixNano() - start
+		time.Sleep(time.Duration(Timeout-time.Duration(duringTime)) * time.Nanosecond)
+	}
+	stats.LossPk = int(float64(lossPk) / float64(stats.SendPk) * 100)
+	if stats.RevcPk > 0 {
+		stats.AvgDelay /= float64(stats.RevcPk)
+	} else {
+		stats.AvgDelay = 0
+	}
+	seelog.Debug("[func:UniformPing] Target IP: ", TargetIPAddr.String(),
+		" SendPk: ", stats.SendPk,
+		" RevcPk: ", stats.RevcPk,
+		" LossPk: ", stats.LossPk,
+		" AvgDelay: ", stats.AvgDelay,
+		" MaxDelay: ", stats.MaxDelay,
+		" MinDelay: ", stats.MinDelay)
+	return stats, nil
 }

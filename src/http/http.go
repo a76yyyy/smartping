@@ -3,24 +3,22 @@ package http
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/cihub/seelog"
-	"github.com/a76yyyy/smartping/src/g"
-	"github.com/wcharczuk/go-chart"
-	"github.com/wcharczuk/go-chart/drawing"
 	"log"
 	"net/http"
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/a76yyyy/smartping/src/g"
+	"github.com/cihub/seelog"
+	"github.com/wcharczuk/go-chart"
+	"github.com/wcharczuk/go-chart/drawing"
 )
 
 func ValidIP4(ipAddress string) bool {
 	ipAddress = strings.Trim(ipAddress, " ")
 	re, _ := regexp.Compile(`^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$`)
-	if re.MatchString(ipAddress) {
-		return true
-	}
-	return false
+	return re.MatchString(ipAddress)
 }
 
 func RenderJson(w http.ResponseWriter, v interface{}) {

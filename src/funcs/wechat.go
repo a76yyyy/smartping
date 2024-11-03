@@ -222,7 +222,7 @@ func (s *Statistics) append(result ping.IPingResult) {
 	s.Ok++
 }
 
-func (s *Statistics) clear() {
+func (s *Statistics) Clear() {
 	s.Max = 0
 	s.Min = 0
 	s.Total = 0
@@ -231,7 +231,7 @@ func (s *Statistics) clear() {
 	s.Failed = 0
 }
 
-func (s *Statistics) print() {
+func (s *Statistics) Print() {
 	if s.Sent == 0 {
 		return
 	}

@@ -25,3 +25,4 @@ logs/*
 html/admin/*
 src/logs
 var/*
+__debug_bin*

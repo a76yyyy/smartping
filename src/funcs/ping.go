@@ -20,48 +20,25 @@ func Ping() {
 	var wg sync.WaitGroup
 	for _, target := range g.SelfCfg.Ping {
 		wg.Add(1)
-		go PingTask(g.Cfg.Addr, g.Cfg.Network[target], &wg)
+		go PingTask(g.Cfg.Network[target], &wg)
 	}
 	wg.Wait()
 	go StartAlert()
 }
 
 // ping main function
-func PingTask(saddr string, t g.NetworkMember, wg *sync.WaitGroup) {
+func PingTask(t g.NetworkMember, wg *sync.WaitGroup) {
+	defer wg.Done()
 	seelog.Info("Start Ping " + t.Addr + "..")
-	stat := g.PingSt{}
-	stat.MinDelay = -1
-	lossPK := 0
+	stat := g.PingSt{
+		MinDelay: -1,
+	}
 	ipaddr, err := net.ResolveIPAddr("ip", t.Addr)
 	if err == nil {
-		for i := 0; i < 20; i++ {
-			starttime := time.Now().UnixNano()
-			delay, err := nettools.RunPing(saddr, ipaddr, 3*time.Second, 64, i)
-			if err == nil {
-				stat.AvgDelay = stat.AvgDelay + delay
-				if stat.MaxDelay < delay {
-					stat.MaxDelay = delay
-				}
-				if stat.MinDelay == -1 || stat.MinDelay > delay {
-					stat.MinDelay = delay
-				}
-				stat.RevcPk = stat.RevcPk + 1
-				seelog.Debug("[func:StartPing IcmpPing] ID:", i, " IP:", t.Addr)
-			} else {
-				seelog.Debug("[func:StartPing IcmpPing] ID:", i, " IP:", t.Addr, "| err:", err)
-				lossPK = lossPK + 1
-			}
-			stat.SendPk = stat.SendPk + 1
-			stat.LossPk = int((float64(lossPK) / float64(stat.SendPk)) * 100)
-			duringtime := time.Now().UnixNano() - starttime
-			time.Sleep(time.Duration(3000*1000000-duringtime) * time.Nanosecond)
+		stat, err = nettools.UniformPing(ipaddr, 20, 3*time.Second, 64)
+		if err != nil {
+			seelog.Error("[func:PingTask] Target Addr: ", ipaddr, " err: ", err)
 		}
-		if stat.RevcPk > 0 {
-			stat.AvgDelay = stat.AvgDelay / float64(stat.RevcPk)
-		} else {
-			stat.AvgDelay = 0.0
-		}
-		seelog.Debug("[func:IcmpPing] Finish Addr:", t.Addr, " MaxDelay:", stat.MaxDelay, " MinDelay:", stat.MinDelay, " AvgDelay:", stat.AvgDelay, " Revc:", stat.RevcPk, " LossPK:", stat.LossPk)
 	} else {
 		stat.AvgDelay = 0.00
 		stat.MinDelay = 0.00
@@ -69,24 +46,23 @@ func PingTask(saddr string, t g.NetworkMember, wg *sync.WaitGroup) {
 		stat.SendPk = 0
 		stat.RevcPk = 0
 		stat.LossPk = 100
-		seelog.Debug("[func:IcmpPing] Finish Addr:", t.Addr, " Unable to resolve destination host")
+		seelog.Debug("[func:PingTask] Target Addr:", t.Addr, " err: Unable to resolve destination host")
 	}
 	PingStorage(stat, t.Addr)
-	wg.Done()
 	seelog.Info("Finish Ping " + t.Addr + "..")
 }
 
 // storage ping data
 func PingStorage(pingres g.PingSt, Addr string) {
 	logtime := time.Now().Format("2006-01-02 15:04")
-	seelog.Info("[func:StartPing] ", "(", logtime, ")Starting PingStorage ", Addr)
+	seelog.Info("[func:PingStorage] ", "(", logtime, ")Starting PingStorage: ", Addr)
 	sql := "INSERT INTO [pinglog] (logtime, target, maxdelay, mindelay, avgdelay, sendpk, revcpk, losspk) values('" + logtime + "','" + Addr + "','" + strconv.FormatFloat(pingres.MaxDelay, 'f', 2, 64) + "','" + strconv.FormatFloat(pingres.MinDelay, 'f', 2, 64) + "','" + strconv.FormatFloat(pingres.AvgDelay, 'f', 2, 64) + "','" + strconv.Itoa(pingres.SendPk) + "','" + strconv.Itoa(pingres.RevcPk) + "','" + strconv.Itoa(pingres.LossPk) + "')"
-	seelog.Debug("[func:StartPing] ", sql)
+	seelog.Debug("[func:PingStorage] ", sql)
 	g.DLock.Lock()
 	_, err := g.Db.Exec(sql)
 	if err != nil {
-		seelog.Error("[func:StartPing] Sql Error ", err)
+		seelog.Error("[func:PingStorage] Sql Error ", err)
 	}
 	g.DLock.Unlock()
-	seelog.Info("[func:StartPing] ", "(", logtime, ") Finish PingStorage  ", Addr)
+	seelog.Info("[func:PingStorage] ", "(", logtime, ") Finish PingStorage  ", Addr)
 }

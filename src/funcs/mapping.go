@@ -3,7 +3,6 @@ package funcs
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"net"
 	"strconv"
 	"sync"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/cihub/seelog"
 	_ "github.com/mattn/go-sqlite3"
+
 	// _ "github.com/glebarez/sqlite"
 	// _ "github.com/logoove/sqlite"
 	// _ "github.com/go-sqlite/sqlite3"
@@ -28,7 +28,7 @@ func Mapping() {
 	MapStatus = map[string][]g.MapVal{}
 	seelog.Debug("[func:Mapping]", g.Cfg.Chinamap)
 	for tel, provDetail := range g.Cfg.Chinamap {
-		for prov, _ := range provDetail {
+		for prov := range provDetail {
 			seelog.Debug("[func:Mapping]", g.Cfg.Chinamap[tel][prov])
 			if len(g.Cfg.Chinamap[tel][prov]) > 0 {
 				go MappingTask(tel, prov, g.Cfg.Chinamap[tel][prov], &wg)
@@ -45,42 +45,26 @@ func MappingTask(tel string, prov string, ips []string, wg *sync.WaitGroup) {
 	seelog.Info("Start MappingTask " + tel + " " + prov + "..")
 	statMap := []g.PingSt{}
 	for _, ip := range ips {
-		seelog.Debug("[func:StartChinaMapPing]", ip)
+		seelog.Debug("[func:MappingTask] Target Addr: ", ip)
 		ipaddr, err := net.ResolveIPAddr("ip", ip)
 		if err == nil {
-			for i := 0; i < 3; i++ {
-				stat := g.PingSt{}
-				stat.MinDelay = -1
-				stat.LossPk = 0
-				delay, err := nettools.RunPing(g.Cfg.Addr, ipaddr, 3*time.Second, 64, i)
-				if err == nil {
-					stat.AvgDelay = stat.AvgDelay + delay
-					if stat.MaxDelay < delay {
-						stat.MaxDelay = delay
-					}
-					if stat.MinDelay == -1 || stat.MinDelay > delay {
-						stat.MinDelay = delay
-					}
-					stat.RevcPk = stat.RevcPk + 1
-					seelog.Debug("[func:StartChinaMapPing IcmpPing] ID:", i, " IP:", ip)
-				} else {
-					seelog.Debug("[func:StartChinaMapPing IcmpPing] ID:", i, " IP:", ip, " | ", err)
-					stat.LossPk = stat.LossPk + 1
-				}
-				stat.SendPk = stat.SendPk + 1
-				stat.LossPk = int((float64(stat.LossPk) / float64(stat.SendPk)) * 100)
-				if stat.RevcPk > 0 {
-					stat.AvgDelay = stat.AvgDelay / float64(stat.RevcPk)
-				} else {
-					stat.AvgDelay = 2000
-				}
-				statMap = append(statMap, stat)
+			stat, err := nettools.GeneralPing(ipaddr, 3, 3*time.Second, 64)
+			if err != nil {
+				seelog.Error("[func:MappingTask] Target Addr: ", ipaddr, " err: ", err)
 			}
+
+			if stat.RevcPk == 0 {
+				stat.AvgDelay = 3000.00
+				stat.MinDelay = 3000.00
+				stat.MaxDelay = 3000.00
+			}
+			statMap = append(statMap, stat)
 		} else {
+			seelog.Error("[func:MappingTask] Target Addr: ", ip, " err: Unable to resolve destination host")
 			stat := g.PingSt{}
-			stat.AvgDelay = 2000.00
-			stat.MinDelay = 2000.00
-			stat.MaxDelay = 2000.00
+			stat.AvgDelay = 3000.00
+			stat.MinDelay = 3000.00
+			stat.MaxDelay = 3000.00
 			stat.SendPk = 0
 			stat.RevcPk = 0
 			stat.LossPk = 100
@@ -91,18 +75,18 @@ func MappingTask(tel string, prov string, ips []string, wg *sync.WaitGroup) {
 	fT := 0
 	effCnt := 0
 	for _, stat := range statMap {
-		if len(statMap) > 1 && fT < int(math.Ceil(float64(len(statMap)))/4) {
-			if stat.LossPk == 3 {
+		if len(statMap) > 1 && fT < (len(statMap)+3)/4 {
+			if stat.LossPk == 100 {
 				fT = fT + 1
 				continue
 			}
 		}
-		fStatDetail.MaxDelay = fStatDetail.MaxDelay + stat.MaxDelay
-		fStatDetail.MinDelay = fStatDetail.MinDelay + stat.MinDelay
+		// fStatDetail.MaxDelay = fStatDetail.MaxDelay + stat.MaxDelay
+		// fStatDetail.MinDelay = fStatDetail.MinDelay + stat.MinDelay
 		fStatDetail.AvgDelay = fStatDetail.AvgDelay + stat.AvgDelay
-		fStatDetail.SendPk = fStatDetail.SendPk + stat.SendPk
-		fStatDetail.RevcPk = fStatDetail.RevcPk + stat.RevcPk
-		fStatDetail.LossPk = fStatDetail.SendPk - fStatDetail.RevcPk
+		// fStatDetail.SendPk = fStatDetail.SendPk + stat.SendPk
+		// fStatDetail.RevcPk = fStatDetail.RevcPk + stat.RevcPk
+		// fStatDetail.LossPk = fStatDetail.SendPk - fStatDetail.RevcPk
 		effCnt = effCnt + 1
 	}
 	gMapVal := g.MapVal{}
@@ -118,20 +102,21 @@ func MappingTask(tel string, prov string, ips []string, wg *sync.WaitGroup) {
 
 func MapPingStorage() {
 	seelog.Info("Start MapPingStorage...")
-	seelog.Debug(MapStatus)
+	logtime := time.Now().Format("2006-01-02 15:04")
+	seelog.Debug("[func:MapPingStorage] ", "(", logtime, ")Starting MapPingStorage ", MapStatus)
 	jdata, err := json.Marshal(MapStatus)
 	if err != nil {
-		seelog.Error("[func:StartPing] Json Error ", err)
+		seelog.Error("[func:MapPingStorage] Json Error ", err)
 	}
-	sql := "REPLACE INTO [mappinglog] (logtime, mapjson) values('" + time.Now().Format("2006-01-02 15:04") + "','" + string(jdata) + "')"
+	sql := "REPLACE INTO [mappinglog] (logtime, mapjson) values('" + logtime + "','" + string(jdata) + "')"
+	seelog.Debug("[func:MapPingStorage] ", sql)
 	g.DLock.Lock()
 	g.Db.Exec(sql)
 	_, err = g.Db.Exec(sql)
 	seelog.Debug(sql)
 	if err != nil {
-		seelog.Error("[func:StartPing] Sql Error ", err)
+		seelog.Error("[func:MapPingStorage] Sql Error ", err)
 	}
 	g.DLock.Unlock()
-	seelog.Debug("[func:MapPingStorage] ", sql)
-	seelog.Info("Finish MapPingStorage...")
+	seelog.Info("Finish MapPingStorage.")
 }

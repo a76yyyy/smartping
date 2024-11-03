@@ -1,15 +1,12 @@
 package nettools
 
 import (
-	"errors"
-	"math"
-	"math/rand"
 	"net"
-	"sync"
 	"time"
 
-	"golang.org/x/net/icmp"
-	"golang.org/x/net/ipv4"
+	"github.com/a76yyyy/smartping/src/g"
+	"github.com/cihub/seelog"
+	probing "github.com/prometheus-community/pro-bing"
 )
 
 type Mtr struct {
@@ -20,118 +17,75 @@ type Mtr struct {
 	Avg   time.Duration
 	Best  time.Duration
 	Wrst  time.Duration
-	StDev float64
+	StDev time.Duration
 }
 
-func RunMtr(SrcAddr string, Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mtr, error) {
+func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxTimeoutCount int) ([]Mtr, error) {
 	result := []Mtr{}
-	Lock := sync.Mutex{}
-	var wg sync.WaitGroup
-	mtr := map[int][]ICMP{}
-	var err error
-	timeouts := 0
+	mtr := map[int]*probing.Statistics{}
+	timeoutCount := 0
+
 	for ttl := 1; ttl <= maxttl; ttl++ {
-		id := rand.Intn(65535)
-		seq := rand.Intn(65535)
-		res := pkg{
-			maxrtt: maxrtt,
-			id:     id,
-			seq:    seq,
-			msg:    icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &icmp.Echo{ID: id, Seq: seq}},
-		}
-		res.dest, err = net.ResolveIPAddr("ip", Addr)
+		pinger, err := probing.NewPinger(Addr)
 		if err != nil {
-			return result, errors.New("Unable to resolve destination host")
-		}
-		res.netmsg, err = res.msg.Marshal(nil)
-		if nil != err {
 			return result, err
 		}
-		next := res.Send(SrcAddr, ttl)
-		if next.Timeout {
-			timeouts++
-		} else {
-			timeouts = 0
-		}
-		if timeouts == maxtimeout {
-			break
-		}
-		Lock.Lock()
-		mtr[ttl] = append(mtr[ttl], next)
-		Lock.Unlock()
-		wg.Add(1)
-		go func(ittl int) {
-			defer wg.Done()
-			for j := 1; j < 10; j++ {
-				id := rand.Intn(65535)
-				seq := rand.Intn(65535)
-				res := pkg{
-					maxrtt: maxrtt,
-					id:     id,
-					seq:    seq,
-					msg:    icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &icmp.Echo{ID: id, Seq: seq}},
-				}
-				res.dest, err = net.ResolveIPAddr("ip", Addr)
-				if err != nil {
-					return
-				}
-				res.netmsg, err = res.msg.Marshal(nil)
-				if nil != err {
-					return
-				}
-				nowTime := time.Now()
-				next := res.Send(SrcAddr, ttl)
-				Lock.Lock()
-				mtr[ittl] = append(mtr[ittl], next)
-				Lock.Unlock()
-				time.Sleep(time.Second - time.Now().Sub(nowTime))
-			}
-		}(ttl)
-		if next.Final {
-			break
-		}
-	}
-	wg.Wait()
-	for i := 1; i <= len(mtr); i++ {
-		imtr := Mtr{}
-		for id, val := range mtr[i] {
-			if val.Addr != nil {
-				imtr.Host = val.Addr.String()
-			} else {
-				if imtr.Host == "" {
-					imtr.Host = "???"
-				}
-			}
-			imtr.Send += 1
-			if val.Timeout {
-				imtr.Loss += 1
-			} else {
-				if imtr.Wrst < val.RTT {
-					imtr.Wrst = val.RTT
-				}
-				if id == 0 {
-					imtr.Best = val.RTT
-				}
-				if imtr.Best > val.RTT {
-					imtr.Best = val.RTT
-				}
-				imtr.Avg += val.RTT
-				imtr.Last = val.RTT
-			}
-		}
-		if (imtr.Send - imtr.Loss) > 0 {
-			imtr.Avg = imtr.Avg / time.Duration(imtr.Send-imtr.Loss)
-			for _, val := range mtr[i] {
-				if !val.Timeout {
-					v := (float64(val.RTT.Nanoseconds()) / 1e6) - (float64(imtr.Avg.Nanoseconds()) / 1e6)
-					imtr.StDev += v * v
-				}
-			}
-			imtr.StDev = math.Sqrt(imtr.StDev / float64(imtr.Send-imtr.Loss))
-		}
-		result = append(result, imtr)
 
+		pinger.SetPrivileged(g.Cfg.PingPrivilege)
+		pinger.Timeout = maxrtt
+		pinger.Count = 10
+		pinger.TTL = ttl
+		pinger.Size = 64
+
+		err = pinger.Run()
+		if err != nil {
+			return result, err
+		}
+
+		stats := pinger.Statistics()
+
+		seelog.Debug("[func:RunMtr] Target Addr: ", Addr, " ttl: ", ttl, " stats: ", stats)
+		mtr[ttl] = stats
+		if stats.PacketsRecv > 0 {
+			timeoutCount = 0 // 一旦收到回复，重置超时计数器
+			if net.ParseIP(stats.IPAddr.String()).Equal(net.ParseIP(Addr)) {
+				break
+			}
+		} else {
+			timeoutCount++ // 没有收到回复，增加超时计数器
+			if timeoutCount >= maxTimeoutCount {
+				break // 如果连续超时次数达到阈值，停止测试
+			}
+		}
+
+		if stats.PacketsSent == stats.PacketsRecv {
+			break
+		}
 	}
+
+	for _, stats := range mtr {
+		imtr := Mtr{}
+
+		imtr.Host = stats.IPAddr.String()
+		if imtr.Host == "<nil>" {
+			imtr.Host = "???"
+		}
+
+		imtr.Send = stats.PacketsSent
+		imtr.Loss = stats.PacketsSent - stats.PacketsRecv
+		if stats.PacketsRecv > 0 {
+			imtr.Last = stats.Rtts[stats.PacketsRecv-1]
+		} else {
+			imtr.Last = 0
+		}
+		imtr.Avg = stats.AvgRtt
+		imtr.Best = stats.MinRtt
+		imtr.Wrst = stats.MaxRtt
+		imtr.StDev = stats.StdDevRtt
+
+		result = append(result, imtr)
+	}
+	seelog.Debug("[func:RunMtr] result: ", result)
 	return result, nil
 }
 

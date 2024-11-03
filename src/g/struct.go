@@ -1,19 +1,20 @@
 package g
 
 type Config struct {
-	Ver        string
-	Port       int
-	Name       string
-	Addr       string
-	Mode       map[string]string
-	Base       map[string]int
-	Topology   map[string]string
-	Alert      map[string]string
-	Network    map[string]NetworkMember
-	Chinamap   map[string]map[string][]string
-	Toollimit  int
-	Authiplist string
-	Password   string
+	Ver           string
+	Port          int
+	Name          string
+	Addr          string
+	Mode          map[string]string
+	Base          map[string]int
+	Topology      map[string]string
+	Alert         map[string]string
+	Network       map[string]NetworkMember
+	Chinamap      map[string]map[string][]string
+	Toollimit     int
+	Authiplist    string
+	Password      string
+	PingPrivilege bool
 }
 
 type NetworkMember struct {
@@ -25,7 +26,7 @@ type NetworkMember struct {
 	Topology []map[string]string
 }
 
-//Ping Struct
+// Ping Struct
 type PingSt struct {
 	SendPk   int
 	RevcPk   int
@@ -35,7 +36,7 @@ type PingSt struct {
 	MaxDelay float64
 }
 
-//Ping mini graph Struct
+// Ping mini graph Struct
 type PingStMini struct {
 	Lastcheck []string `json:"lastcheck"`
 	LossPk    []string `json:"losspk"`

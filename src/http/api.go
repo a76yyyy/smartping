@@ -10,13 +10,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/cihub/seelog"
 	"github.com/a76yyyy/smartping/src/funcs"
 	"github.com/a76yyyy/smartping/src/g"
 	"github.com/a76yyyy/smartping/src/nettools"
+	"github.com/cihub/seelog"
 	"github.com/wcharczuk/go-chart"
 	"github.com/wcharczuk/go-chart/drawing"
 	"github.com/wzv5/pping/pkg/ping"
@@ -71,7 +70,7 @@ func copy_array(src []string) []string {
 func configHandle(w http.ResponseWriter, r *http.Request) {
 	if !AuthUserIp(r.RemoteAddr) && !AuthAgentIp(r.RemoteAddr, true) {
 		o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
-		http.Error(w, o, 401)
+		http.Error(w, o, http.StatusUnauthorized)
 		return
 	}
 	r.ParseForm()
@@ -108,13 +107,13 @@ func configHandle(w http.ResponseWriter, r *http.Request) {
 func pingHandle(w http.ResponseWriter, r *http.Request) {
 	if !AuthUserIp(r.RemoteAddr) && !AuthAgentIp(r.RemoteAddr, true) {
 		o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
-		http.Error(w, o, 401)
+		http.Error(w, o, http.StatusUnauthorized)
 		return
 	}
 	r.ParseForm()
 	// if len(r.Form["ip"]) == 0 {
 	// 	o := "Missing Param !"
-	// 	http.Error(w, o, 406)
+	// 	http.Error(w, o, http.StatusNotAcceptable)
 	// 	return
 	// }
 	var tableip string
@@ -231,7 +230,7 @@ func pingHandle(w http.ResponseWriter, r *http.Request) {
 func topologyHandle(w http.ResponseWriter, r *http.Request) {
 	if !AuthUserIp(r.RemoteAddr) && !AuthAgentIp(r.RemoteAddr, true) {
 		o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
-		http.Error(w, o, 401)
+		http.Error(w, o, http.StatusUnauthorized)
 		return
 	}
 	preout := make(map[string]string)
@@ -249,7 +248,7 @@ func topologyHandle(w http.ResponseWriter, r *http.Request) {
 func alertHandle(w http.ResponseWriter, r *http.Request) {
 	if !AuthUserIp(r.RemoteAddr) && !AuthAgentIp(r.RemoteAddr, true) {
 		o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
-		http.Error(w, o, 401)
+		http.Error(w, o, http.StatusUnauthorized)
 		return
 	}
 	type DateList struct {
@@ -308,7 +307,7 @@ func alertHandle(w http.ResponseWriter, r *http.Request) {
 func mappingHandle(w http.ResponseWriter, r *http.Request) {
 	if !AuthUserIp(r.RemoteAddr) && !AuthAgentIp(r.RemoteAddr, true) {
 		o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
-		http.Error(w, o, 401)
+		http.Error(w, o, http.StatusUnauthorized)
 		return
 	}
 	m, _ := time.ParseDuration("-1m")
@@ -353,7 +352,7 @@ func mappingHandle(w http.ResponseWriter, r *http.Request) {
 func toolsHandle(w http.ResponseWriter, r *http.Request) {
 	if !AuthUserIp(r.RemoteAddr) && !AuthAgentIp(r.RemoteAddr, true) {
 		o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
-		http.Error(w, o, 401)
+		http.Error(w, o, http.StatusUnauthorized)
 		return
 	}
 	preout := g.ToolsRes{}
@@ -388,45 +387,13 @@ func toolsHandle(w http.ResponseWriter, r *http.Request) {
 	}
 	preout.Ip = ipaddr.String()
 	if mode == "icmp" {
-		lossPK := 0
-		var channel chan float64 = make(chan float64, 5)
-		var wg sync.WaitGroup
-		for i := 0; i < 5; i++ {
-			wg.Add(1)
-			go func() {
-				delay, err := nettools.RunPing(g.Cfg.Addr, ipaddr, 3*time.Second, 64, i)
-				if err != nil {
-					channel <- -1.00
-				} else {
-					channel <- delay
-				}
-				wg.Done()
-			}()
-			time.Sleep(time.Duration(100 * time.Millisecond))
+		preout.Ping, err = nettools.GeneralPing(ipaddr, 5, 3*time.Second, 64)
+		if err != nil {
+			preout.Error = err.Error()
+			RenderJson(w, preout)
+			return
 		}
-		wg.Wait()
-		for i := 0; i < 5; i++ {
-			select {
-			case delay := <-channel:
-				if delay != -1.00 {
-					preout.Ping.AvgDelay = preout.Ping.AvgDelay + delay
-					if preout.Ping.MaxDelay < delay {
-						preout.Ping.MaxDelay = delay
-					}
-					if preout.Ping.MinDelay == -1 || preout.Ping.MinDelay > delay {
-						preout.Ping.MinDelay = delay
-					}
-					preout.Ping.RevcPk = preout.Ping.RevcPk + 1
-				} else {
-					lossPK = lossPK + 1
-				}
-				preout.Ping.SendPk = preout.Ping.SendPk + 1
-				preout.Ping.LossPk = int((float64(lossPK) / float64(preout.Ping.SendPk)) * 100)
-			}
-		}
-		if preout.Ping.RevcPk > 0 {
-			preout.Ping.AvgDelay = preout.Ping.AvgDelay / float64(preout.Ping.RevcPk)
-		} else {
+		if preout.Ping.RevcPk == 0 {
 			preout.Ping.AvgDelay = 3000
 			preout.Ping.MinDelay = 3000
 			preout.Ping.MaxDelay = 3000
@@ -437,7 +404,7 @@ func toolsHandle(w http.ResponseWriter, r *http.Request) {
 		switch mode {
 		case "http":
 			method := "GET"
-			url := "http:/" + preout.Ip
+			url := "http://" + preout.Ip
 			p := ping.NewHttpPing(method, url, timeout)
 			p.DisableHttp2 = false
 			p.DisableCompression = false
@@ -510,7 +477,7 @@ func toolsHandle(w http.ResponseWriter, r *http.Request) {
 func saveconfigHandle(w http.ResponseWriter, r *http.Request) {
 	if !AuthUserIp(r.RemoteAddr) && !AuthAgentIp(r.RemoteAddr, true) {
 		o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
-		http.Error(w, o, 401)
+		http.Error(w, o, http.StatusUnauthorized)
 		return
 	}
 	preout := make(map[string]string)
@@ -683,7 +650,7 @@ func saveconfigHandle(w http.ResponseWriter, r *http.Request) {
 func sendmailtestHandle(w http.ResponseWriter, r *http.Request) {
 	if !AuthUserIp(r.RemoteAddr) && !AuthAgentIp(r.RemoteAddr, true) {
 		o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
-		http.Error(w, o, 401)
+		http.Error(w, o, http.StatusUnauthorized)
 		return
 	}
 	preout := make(map[string]string)
@@ -727,7 +694,7 @@ func sendmailtestHandle(w http.ResponseWriter, r *http.Request) {
 func sendwechattestHandle(w http.ResponseWriter, r *http.Request) {
 	if !AuthUserIp(r.RemoteAddr) && !AuthAgentIp(r.RemoteAddr, true) {
 		o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
-		http.Error(w, o, 401)
+		http.Error(w, o, http.StatusUnauthorized)
 		return
 	}
 	preout := make(map[string]string)
@@ -755,6 +722,11 @@ func sendwechattestHandle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agentId, err := funcs.StringToInt(r.Form["AgentId"][0])
+	if err != nil {
+		preout["info"] = "应用编号非法, 必须为整数!"
+		RenderJson(w, preout)
+		return
+	}
 	corpId := r.Form["CorpId"][0]
 	corpSecret := r.Form["CorpSecret"][0]
 	if corpId == "samepasswordasbefore" {
@@ -770,8 +742,8 @@ func sendwechattestHandle(w http.ResponseWriter, r *http.Request) {
 	// token.ErrMsg = g.Cfg.Alert["ErrMsg"]
 	token.AccessToken = g.Cfg.Alert["AccessToken"]
 	token.ExpiresIn, _ = funcs.StringToInt64(g.Cfg.Alert["ExpiresIn"])
-	token.Time, _ = time.Parse("2016-01-02 15:04:05", g.Cfg.Alert["Time"])
-	if token.AccessToken == "" || time.Now().Sub(token.Time).Seconds() > float64(token.ExpiresIn)-200 {
+	token.Time, _ = time.Parse("2006-01-02 15:04:05", g.Cfg.Alert["Time"])
+	if token.AccessToken == "" || time.Since(token.Time).Seconds() > float64(token.ExpiresIn)-200 {
 		token = funcs.GetAccessToken(corpId, corpSecret)
 		if token.ErrCode != 0 {
 			preout["info"] = fmt.Sprint("[func:AlertWechat] GetAccessToken Error ", token.ErrCode, token.ErrMsg)
@@ -852,7 +824,7 @@ func wechatmsghandle(w http.ResponseWriter, r *http.Request) {
 func graphHandle(w http.ResponseWriter, r *http.Request) {
 	if !AuthUserIp(r.RemoteAddr) {
 		o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
-		http.Error(w, o, 401)
+		http.Error(w, o, http.StatusUnauthorized)
 		return
 	}
 	w.Header().Set("Content-Type", "image/png")
@@ -907,7 +879,7 @@ func graphHandle(w http.ResponseWriter, r *http.Request) {
 		Width:  300 * 3,
 		Height: 130 * 3,
 		Background: chart.Style{
-			FillColor: drawing.Color{249, 246, 241, 255},
+			FillColor: drawing.Color{R: 249, G: 246, B: 241, A: 255},
 		},
 		XAxis: chart.XAxis{
 			Style: chart.Style{
@@ -956,8 +928,8 @@ func graphHandle(w http.ResponseWriter, r *http.Request) {
 			chart.ContinuousSeries{
 				Style: chart.Style{
 					Show:        true,
-					StrokeColor: drawing.Color{249, 246, 241, 255},
-					FillColor:   drawing.Color{249, 246, 241, 255},
+					StrokeColor: drawing.Color{R: 249, G: 246, B: 241, A: 255},
+					FillColor:   drawing.Color{R: 249, G: 246, B: 241, A: 255},
 				},
 				XValues: Xals,
 				YValues: Bkg,
@@ -965,8 +937,8 @@ func graphHandle(w http.ResponseWriter, r *http.Request) {
 			chart.ContinuousSeries{
 				Style: chart.Style{
 					Show:        true,
-					StrokeColor: drawing.Color{0, 204, 102, 200},
-					FillColor:   drawing.Color{0, 204, 102, 200},
+					StrokeColor: drawing.Color{R: 0, G: 204, B: 102, A: 200},
+					FillColor:   drawing.Color{R: 0, G: 204, B: 102, A: 200},
 				},
 				XValues: Xals,
 				YValues: AvgDelay,
@@ -975,8 +947,8 @@ func graphHandle(w http.ResponseWriter, r *http.Request) {
 			chart.ContinuousSeries{
 				Style: chart.Style{
 					Show:        true,
-					StrokeColor: drawing.Color{255, 0, 0, 200},
-					FillColor:   drawing.Color{255, 0, 0, 200},
+					StrokeColor: drawing.Color{R: 255, G: 0, B: 0, A: 200},
+					FillColor:   drawing.Color{R: 255, G: 0, B: 0, A: 200},
 				},
 				XValues: Xals,
 				YValues: LossPk,
@@ -989,14 +961,14 @@ func graphHandle(w http.ResponseWriter, r *http.Request) {
 func proxyHandle(w http.ResponseWriter, r *http.Request) {
 	if !AuthUserIp(r.RemoteAddr) {
 		o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
-		http.Error(w, o, 401)
+		http.Error(w, o, http.StatusUnauthorized)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	r.ParseForm()
 	if len(r.Form["g"]) == 0 {
 		o := "Url Param Error!"
-		http.Error(w, o, 406)
+		http.Error(w, o, http.StatusNotAcceptable)
 		return
 	}
 	to := strconv.Itoa(g.Cfg.Base["Timeout"])
@@ -1007,7 +979,7 @@ func proxyHandle(w http.ResponseWriter, r *http.Request) {
 	defaultto, err := strconv.Atoi(to)
 	if err != nil {
 		o := "Timeout Param Error!"
-		http.Error(w, o, 406)
+		http.Error(w, o, http.StatusNotAcceptable)
 		return
 	}
 	timeout := time.Duration(time.Duration(defaultto) * time.Second)
@@ -1017,7 +989,7 @@ func proxyHandle(w http.ResponseWriter, r *http.Request) {
 	resp, err := client.Get(url)
 	if err != nil {
 		o := "Request Remote Data Error:" + err.Error()
-		http.Error(w, o, 503)
+		http.Error(w, o, http.StatusServiceUnavailable)
 		return
 	}
 	defer resp.Body.Close()
@@ -1025,7 +997,7 @@ func proxyHandle(w http.ResponseWriter, r *http.Request) {
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		o := "Read Remote Data Error:" + err.Error()
-		http.Error(w, o, 503)
+		http.Error(w, o, http.StatusServiceUnavailable)
 		return
 	}
 	if resCode != 200 {

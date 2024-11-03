@@ -10,9 +10,9 @@ import (
 	"runtime"
 
 	"github.com/jakecoffman/cron"
-	"github.com/smartping/smartping/src/funcs"
-	"github.com/smartping/smartping/src/g"
-	"github.com/smartping/smartping/src/http"
+	"github.com/a76yyyy/smartping/src/funcs"
+	"github.com/a76yyyy/smartping/src/g"
+	"github.com/a76yyyy/smartping/src/http"
 	//"sync"
 )
 

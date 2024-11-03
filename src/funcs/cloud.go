@@ -2,7 +2,7 @@ package funcs
 
 import (
 	"github.com/cihub/seelog"
-	"github.com/smartping/smartping/src/g"
+	"github.com/a76yyyy/smartping/src/g"
 )
 
 func StartCloudMonitor() {

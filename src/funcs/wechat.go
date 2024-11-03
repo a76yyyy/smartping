@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/smartping/smartping/src/g"
+	"github.com/a76yyyy/smartping/src/g"
 	"github.com/wzv5/pping/pkg/ping"
 )
 

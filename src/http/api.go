@@ -169,6 +169,8 @@ func pingHandle(w http.ResponseWriter, r *http.Request) {
 		tableip = r.Form["ip"][0]
 		querySql = "SELECT target,logtime,maxdelay,mindelay,avgdelay,losspk FROM `pinglog` where target='" + tableip + "' and logtime between '" + timeStartStr + "' and '" + timeEndStr + "'  order by logtime "
 	}
+	g.DLock.RLock()
+	defer g.DLock.RUnlock()
 	rows, err := g.Db.Query(querySql)
 	seelog.Debug("[func:/api/ping.json] Query ", querySql)
 	if err != nil {
@@ -263,6 +265,8 @@ func alertHandle(w http.ResponseWriter, r *http.Request) {
 	}
 	listpreout := []string{}
 	datapreout := []g.AlertLog{}
+	g.DLock.RLock()
+	defer g.DLock.RUnlock()
 	querySql := "select date(logtime) as ldate from alertlog group by date(logtime) order by logtime desc"
 	rows, err := g.Db.Query(querySql)
 	seelog.Debug("[func:/api/alert.json] Query ", querySql)
@@ -326,10 +330,10 @@ func mappingHandle(w http.ResponseWriter, r *http.Request) {
 	chinaMp.Avgdelay["ctcc"] = []g.MapVal{}
 	chinaMp.Avgdelay["cucc"] = []g.MapVal{}
 	chinaMp.Avgdelay["cmcc"] = []g.MapVal{}
-	g.DLock.Lock()
+	g.DLock.RLock()
+	defer g.DLock.RUnlock()
 	querySql := "select mapjson from mappinglog where logtime = '" + dataKey + "'"
 	rows, err := g.Db.Query(querySql)
-	g.DLock.Unlock()
 	seelog.Debug("[func:/api/mapping.json] Query ", querySql)
 	if err != nil {
 		seelog.Error("[func:/api/mapping.json] Query ", err)

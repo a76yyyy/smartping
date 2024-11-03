@@ -10,8 +10,9 @@ import (
 	"time"
 
 	"github.com/cihub/seelog"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
+	// _ "github.com/mattn/go-sqlite3"
 	// _ "github.com/glebarez/sqlite"
 	// _ "github.com/logoove/sqlite"
 	// _ "github.com/go-sqlite/sqlite3"
@@ -73,6 +74,8 @@ func StartAlert() {
 func CheckAlertStatus(v map[string]string) bool {
 	Thdchecksec, _ := strconv.Atoi(v["Thdchecksec"])
 	timeStartStr := time.Unix((time.Now().Unix() - int64(Thdchecksec)), 0).Format("2006-01-02 15:04")
+	g.DLock.RLock()
+	defer g.DLock.RUnlock()
 	querysql := "SELECT count(1) cnt FROM  `pinglog` where logtime >= '" + timeStartStr + "' and target = '" + v["Addr"] + "' and (cast(avgdelay as double) > " + v["Thdavgdelay"] + " or cast(losspk as double) > " + v["Thdloss"] + ") "
 	seelog.Debug("[func:CheckAlertStatus] ", querysql)
 	rows, err := g.Db.Query(querysql)
@@ -102,12 +105,11 @@ func AlertStorage(t g.AlertLog) {
 	seelog.Info("[func:AlertStorage] ", "(", t.Logtime, ")Starting AlertStorage ", t.Targetname)
 	sql := "INSERT INTO [alertlog] (logtime, targetip, targetname, tracert) values('" + t.Logtime + "','" + t.Targetip + "','" + t.Targetname + "','" + t.Tracert + "')"
 	g.DLock.Lock()
-	//g.Db.Exec(sql)
+	defer g.DLock.Unlock()
 	_, err := g.Db.Exec(sql)
 	if err != nil {
 		seelog.Error("[func:AlertStorage] Sql Error ", err)
 	}
-	g.DLock.Unlock()
 	seelog.Info("[func:AlertStorage] ", "(", t.Logtime, ") AlertStorage on ", t.Targetname, " finish!")
 }
 

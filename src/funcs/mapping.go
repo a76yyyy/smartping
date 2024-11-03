@@ -9,8 +9,9 @@ import (
 	"time"
 
 	"github.com/cihub/seelog"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
+	// _ "github.com/mattn/go-sqlite3"
 	// _ "github.com/glebarez/sqlite"
 	// _ "github.com/logoove/sqlite"
 	// _ "github.com/go-sqlite/sqlite3"
@@ -109,14 +110,12 @@ func MapPingStorage() {
 		seelog.Error("[func:MapPingStorage] Json Error ", err)
 	}
 	sql := "REPLACE INTO [mappinglog] (logtime, mapjson) values('" + logtime + "','" + string(jdata) + "')"
-	seelog.Debug("[func:MapPingStorage] ", sql)
+	seelog.Debug("[func:MapPingStorage] sql: ", sql)
 	g.DLock.Lock()
-	g.Db.Exec(sql)
+	defer g.DLock.Unlock()
 	_, err = g.Db.Exec(sql)
-	seelog.Debug(sql)
 	if err != nil {
 		seelog.Error("[func:MapPingStorage] Sql Error ", err)
 	}
-	g.DLock.Unlock()
 	seelog.Info("Finish MapPingStorage.")
 }

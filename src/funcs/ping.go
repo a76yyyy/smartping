@@ -7,8 +7,9 @@ import (
 	"time"
 
 	"github.com/cihub/seelog"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
+	// _ "github.com/mattn/go-sqlite3"
 	// _ "github.com/glebarez/sqlite"
 	// _ "github.com/logoove/sqlite"
 	// _ "github.com/go-sqlite/sqlite3"
@@ -59,10 +60,10 @@ func PingStorage(pingres g.PingSt, Addr string) {
 	sql := "INSERT INTO [pinglog] (logtime, target, maxdelay, mindelay, avgdelay, sendpk, revcpk, losspk) values('" + logtime + "','" + Addr + "','" + strconv.FormatFloat(pingres.MaxDelay, 'f', 2, 64) + "','" + strconv.FormatFloat(pingres.MinDelay, 'f', 2, 64) + "','" + strconv.FormatFloat(pingres.AvgDelay, 'f', 2, 64) + "','" + strconv.Itoa(pingres.SendPk) + "','" + strconv.Itoa(pingres.RevcPk) + "','" + strconv.Itoa(pingres.LossPk) + "')"
 	seelog.Debug("[func:PingStorage] ", sql)
 	g.DLock.Lock()
+	defer g.DLock.Unlock()
 	_, err := g.Db.Exec(sql)
 	if err != nil {
 		seelog.Error("[func:PingStorage] Sql Error ", err)
 	}
-	g.DLock.Unlock()
 	seelog.Info("[func:PingStorage] ", "(", logtime, ") Finish PingStorage  ", Addr)
 }

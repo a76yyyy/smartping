@@ -27,7 +27,7 @@ var (
 	AuthAgentIpMap map[string]bool
 	ToolLimit      map[string]int
 	Db             *sql.DB
-	DLock          sync.Mutex
+	DLock          sync.RWMutex
 )
 
 func IsExist(fp string) bool {
